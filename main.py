@@ -12,7 +12,27 @@ def load_data_features_labels(mat_path):
     n_trials, n_samples, n_channels = data.shape
 
     # Step 1: Common Average Reference (CAR)
-    car_data = np.empty_like(data, dtype=np.float64)
+    car_data = []
+
+    for i in range(len(data)):  # Loop through trials
+        trial = []
+        for j in range(len(data[i])):  # Loop through time samples
+            # Compute average across channels at this time sample
+            sum_val = 0
+            for k in range(len(data[i][j])):  # Loop through channels
+                sum_val += data[i][j][k]
+            avg = sum_val / len(data[i][j])
+
+            # Subtract the average from each channel
+            row = []
+            for k in range(len(data[i][j])):
+                row.append(data[i][j][k] - avg)
+            trial.append(row)
+        car_data.append(trial)
+
+    # Convert to numpy array if needed
+    car_data = np.array(car_data)
+
     for i in range(n_trials):
         trial = data[i]
         avg_across_channels = np.mean(trial, axis=1, keepdims=True)
