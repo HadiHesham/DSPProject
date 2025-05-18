@@ -1,111 +1,73 @@
 import scipy.io
 import numpy as np
+from sklearn.metrics import accuracy_score
+from sklearn.neighbors import KNeighborsClassifier
 
-# Load your .mat file
-mat = scipy.io.loadmat(r"C:\Users\hadig\OneDrive\Desktop\test_data_1.mat")
+def load_data_features_labels(mat_path):
+    mat = scipy.io.loadmat(mat_path)
+    data = mat['data']  # shape: (n_trials, n_samples, n_channels)
+    fs = mat['fs'][0][0]  # sampling freq scalar
+    labels = mat['labels'][0]  # Assuming labels shape is (1, n_trials) or (n_trials,)
 
-# Explore keys (you already did)
-print(mat.keys())
+    n_trials, n_samples, n_channels = data.shape
 
-# Access actual data
-data = mat['data']       # EEG data
-labels = mat['labels']   # Corresponding labels
-fs = mat['fs']           # Sampling frequency
-channels = mat['channels']  # Optional: electrode names
+    # Step 1: Common Average Reference (CAR)
+    car_data = np.empty_like(data, dtype=np.float64)
+    for i in range(n_trials):
+        trial = data[i]
+        avg_across_channels = np.mean(trial, axis=1, keepdims=True)
+        car_data[i] = trial - avg_across_channels
 
-print("Data shape:", data.shape)
-print("Labels shape:", labels.shape)
-print("Sampling frequency:", fs)
-print(channels)
-print(len(labels[0]))
-print(len(data[0]))
+    # Step 2: Compute power spectrum and band averages
+    freqs = np.fft.rfftfreq(n_samples, d=1 / fs)
 
-new = []
-for i in range(len(data)):
-    trial = []
-    for j in range(len(data[i])):
-        sum = 0;
-        for k in range(len(data[i][j])):
-            sum = sum + data[i][j][k]
-        average = sum/len(data[i][j])
-        row = []
-        for k in range(len(data[i][j])):
-            row.append(data[i][j][k] - average)
-        trial.append(row)
-    new.append(trial)
-print(new[0][0])
+    bands = {
+        'delta': (0.5, 4),
+        'theta': (4, 8),
+        'alpha': (8, 13),
+        'beta': (13, 30),
+        'gamma': (30, 100)
+    }
 
-n_trials, n_samples, n_channels = data.shape
+    trial_band_averages = []
+    for trial in range(n_trials):
+        power_sum = {band: 0 for band in bands}
+        count = {band: 0 for band in bands}
 
-# Frequency axis
-freqs = np.fft.rfftfreq(n_samples, d=1 / fs[0][0])  # Only non-negative frequencies
+        for ch in range(n_channels):
+            signal = car_data[trial, :, ch]
+            fft_result = np.fft.rfft(signal)
+            power = np.abs(fft_result) ** 2 / n_samples
 
-# Initialize power spectrum
-power = np.zeros((n_trials, n_channels, len(freqs)))
+            for i, f in enumerate(freqs):
+                for band, (low, high) in bands.items():
+                    if low <= f < high:
+                        power_sum[band] += power[i]
+                        count[band] += 1
 
-# Loop through trials and channels
-for trial in range(n_trials):
-    for ch in range(n_channels):
-        signal = data[trial, :, ch]
-        fft_result = np.fft.rfft(signal)  # 1D FFT
-        power[trial, ch, :] = np.abs(fft_result) ** 2 / n_samples  # Power spectrum
+        band_avgs = {band: (power_sum[band] / count[band] if count[band] else 0) for band in bands}
+        trial_band_averages.append(band_avgs)
 
-power_1d = power[0, 0, :]
-print("Frequencies:", len(freqs))
-print("Power shape:", len(power_1d))
+    # Convert to feature matrix X
+    X = []
+    for i in range(n_trials):
+        band_values = [trial_band_averages[i][band] for band in bands]
+        X.append(band_values)  # No trial number column, just features
+    X = np.array(X)
 
-delta = []
-theta = []
-alpha = []
-beta = []
-gamma = []
-i=0
-for f in freqs:
-    f = float(f)
-    row = [f, float(power_1d[i])]
-    if f >= 0.5 and f<4:
-        delta.append(row)
-    if f >= 4 and f<8:
-        theta.append(row)
-    if f >= 8 and f<13:
-        alpha.append(row)
-    if f >= 13 and f<30:
-        beta.append(row)
-    if f >= 30 and f<100:
-        gamma.append(row)
-    i=i+1
-print("Delta:", delta)
-print("Theta:", theta)
-print("Alpha:", alpha)
-print("Beta:", beta)
-print("Gamma:", gamma)
+    return X, labels
 
-sum = 0
-for pwrs in delta:
-    sum = sum + pwrs[1]
-AVGDelta = sum/len(delta)
-print("AVGDelta:", AVGDelta)
+# Load train features and labels
+X_train, y_train = load_data_features_labels(r"C:\Users\hadig\OneDrive\Desktop\train_data_1.mat")
+# Load test features and labels
+X_test, y_test = load_data_features_labels(r"C:\Users\hadig\OneDrive\Desktop\test_data_1.mat")
 
-sum = 0
-for pwrs in theta:
-    sum = sum + pwrs[1]
-AVGTheta = sum/len(theta)
-print("AVGTheta:", AVGTheta)
+print("Train shape:", X_train.shape, "Test shape:", X_test.shape)
 
-sum = 0
-for pwrs in alpha:
-    sum = sum + pwrs[1]
-AVGAlpha = sum/len(alpha)
-print("AVGAlpha:", AVGAlpha)
-
-sum = 0
-for pwrs in beta:
-    sum = sum + pwrs[1]
-AVGBeta = sum/len(beta)
-print("AVGBeta:", AVGBeta)
-
-sum = 0
-for pwrs in gamma:
-    sum = sum + pwrs[1]
-AVGGamma = sum/len(gamma)
-print("AVGGamma:", AVGGamma)
+# Try KNN with different k values
+for k in range(1, 11):
+    knn = KNeighborsClassifier(n_neighbors=k)
+    knn.fit(X_train, y_train)
+    y_pred = knn.predict(X_test)
+    acc = accuracy_score(y_test, y_pred)
+    print(f"K = {k}: Accuracy = {acc:.4f}")
